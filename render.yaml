@@ -24,12 +24,12 @@ services:
       - key: WHATSAPP_GROUPS
         value: ''
       - key: AMBIENT_REPLY_CHANCE
-        value: '0.45'
+        value: '0.70'
       - key: MIN_AMBIENT_GAP_MS
-        value: '30000'
+        value: '15000'
       - key: MIN_REPLY_DELAY_MS
-        value: '800'
+        value: '300'
       - key: MAX_REPLY_DELAY_MS
-        value: '1800'
+        value: '700'
       - key: MESSAGE_BATCH_WINDOW_MS
-        value: '1200'
+        value: '1800'
