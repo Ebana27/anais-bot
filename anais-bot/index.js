@@ -247,10 +247,10 @@ function naturalReplyDelay(item, batchCount) {
 }
 
 function isCongolibsRelevant(text) {
-  const normalized = text.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase();
-  const education = /\\b(etud|cours|livre|bibliotheque|examen|concours|expose|document|ressource|apprendre|revision|orientation|universite|ecole|scolaire|enseign|formation|quiz|exercice|pedagog)\\w*/i.test(normalized);
-  const platform = /\\b(plateforme|site|application|projet)\\b/i.test(normalized);
-  const feedback = /\\b(avis|opinion|retour|tester|interesse|feedback|recommander|pensez|penses)\\w*/i.test(normalized);
+  const normalized = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const education = /\b(etud|cours|livre|bibliotheque|examen|concours|expose|document|ressource|apprendre|revision|orientation|universite|ecole|scolaire|enseign|formation|quiz|exercice|pedagog)\w*/i.test(normalized);
+  const platform = /\b(plateforme|site|application|projet)\b/i.test(normalized);
+  const feedback = /\b(avis|opinion|retour|tester|interesse|feedback|recommander|pensez|penses)\w*/i.test(normalized);
   return education || (platform && feedback);
 }
 
@@ -268,7 +268,7 @@ async function answer(text, speaker, chatId, quotedText, media, chatType, isOwne
   const alreadyMentioned = /congolibs/i.test(promoContext) ||
     Date.now() - (lastCongolibsMention.get(chatId) || 0) < 30 * 24 * 60 * 60 * 1000;
   const congolibsGuidance = !alreadyMentioned && isCongolibsRelevant(promoContext)
-    ? '\\n\\nQuand le sujet concerne vraiment l’apprentissage, les études, les ressources scolaires ou une plateforme éducative, tu peux parfois proposer Congolibs, le projet de neocodex : ' + CONGOLIBS_URL + '. Présente-le brièvement comme une plateforme éducative et demande si les personnes seraient intéressées pour la découvrir ou donner un avis. Ne l’insère jamais dans une conversation sans rapport, ne force pas la promotion, n’invente pas de fonctionnalités et ne répète pas la suggestion dans la même conversation.'
+    ? '\n\nQuand le sujet concerne vraiment l’apprentissage, les études, les ressources scolaires ou une plateforme éducative, tu peux parfois proposer Congolibs, le projet de neocodex : ' + CONGOLIBS_URL + '. Présente-le brièvement comme une plateforme éducative et demande si les personnes seraient intéressées pour la découvrir ou donner un avis. Ne l’insère jamais dans une conversation sans rapport, ne force pas la promotion, n’invente pas de fonctionnalités et ne répète pas la suggestion dans la même conversation.'
     : '';
   const assistantGuidance = isOwner && chatType === 'private'
     ? '\n\nQuand neocodex te demande de l’aide en privé, sois aussi son assistante : il étudie le Génie informatique, aide-le pour la programmation, ses projets et ses études, ainsi que pour l’organisation, la rédaction et les explications. Ta propre spécialité d’études reste la GRH. Réponds clairement et de façon utile, tout en gardant ton ton naturel. Si une information manque, pose une seule question précise. Ne prétends pas avoir effectué une action extérieure à WhatsApp et ne promets pas de rappels que le bot ne sait pas programmer.'
