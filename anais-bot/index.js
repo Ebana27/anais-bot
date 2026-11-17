@@ -332,12 +332,30 @@ async function processBatch(sock, chatId) {
   console.log(`Anaïs prépare une réponse ${spontaneous ? 'spontanée' : 'à une interpellation'} (${delay} ms).`);
   busyGroups.add(chatId);
   try {
+    await wait(delay);
+    const arrived = pendingGroups.get(chatId) || [];
+    if (arrived.length) {
+      pendingGroups.delete(chatId);
+      if (batchTimers.has(chatId)) clearTimeout(batchTimers.get(chatId));
+      batchTimers.delete(chatId);
+      batchStartedAt.delete(chatId);
+      batch.push(...arrived);
+      const newlyAddressed = arrived.filter((item) => item.addressed);
+      const candidates = newlyAddressed.length ? newlyAddressed : arrived.filter((item) => importance(item) >= 1);
+      if (candidates.length) {
+        chosen = candidates.reduce((best, item) => importance(item) >= importance(best) ? item : best);
+        if (newlyAddressed.length) {
+          spontaneous = false;
+          if (chatId.endsWith('@g.us')) activeGroupUntil.set(chatId, Date.now() + 5 * 60 * 1000);
+        }
+      }
+      console.log('Pendant le délai, ' + arrived.length + ' nouveau(x) message(s) ajouté(s) au contexte.');
+    }
     const media = await mediaPart(sock, chosen.msg);
     const isOwner = Boolean(OWNER_NUMBER && chosen.senderNumber.endsWith(OWNER_NUMBER));
     const isPrivateChat = chatId.endsWith('@s.whatsapp.net') || chatId.endsWith('@lid');
     const imagePrompt = isOwner && isPrivateChat ? imagePromptOf(chosen.text) : null;
     const speaker = isOwner ? 'Mon chéri' : chosen.name;
-    await wait(delay);
     if (imagePrompt) {
       console.log('Anaïs prépare une image avec Cloudflare AI…');
       const image = await generateImage(imagePrompt);
