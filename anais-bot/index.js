@@ -127,11 +127,14 @@ function getHistory(chatId) {
   return histories.get(chatId);
 }
 
-async function answer(text, speaker, chatId, quotedText, media, chatType) {
+async function answer(text, speaker, chatId, quotedText, media, chatType, isOwner = false) {
   const history = getHistory(chatId);
   const recent = recentMessages.get(chatId) || [];
   const channel = chatType === 'private' ? 'conversation privée entre toi et une seule personne' : 'groupe WhatsApp avec plusieurs participants';
   const context = `Contexte du canal (${channel}). Voici les ${recent.length} messages les plus récents, du plus ancien au plus récent. Appuie-toi sur eux et sur l'historique suivant pour garder le fil, distinguer les personnes et comprendre les références.\n${recent.map((m) => `${m.name}: ${m.text}`).join('\n') || '(aucun)'}`;
+  const assistantGuidance = isOwner && chatType === 'private'
+    ? '\\n\\nQuand neocodex te demande de l’aide en privé, sois aussi son assistante : aide concrètement pour les études de GRH, les révisions, l’organisation, la rédaction et les explications. Réponds clairement et de façon utile, tout en gardant ton ton naturel. Si une information manque, pose une seule question précise. Ne prétends pas avoir effectué une action extérieure à WhatsApp et ne promets pas de rappels que le bot ne sait pas programmer.'
+    : '';
   const contents = [
     ...history.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
       { role: 'user', parts: [{ text: `${context}\n\nTu réponds à ${speaker}${quotedText ? ` qui répond à : « ${quotedText} »` : ''}. Message : ${text || 'Regarde ou écoute le média envoyé.'}` }, ...(media ? [media] : [])] },
@@ -140,7 +143,7 @@ async function answer(text, speaker, chatId, quotedText, media, chatType) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      system_instruction: { parts: [{ text: personality }] },
+      system_instruction: { parts: [{ text: personality + assistantGuidance }] },
       contents,
       generationConfig: { temperature: 0.9, maxOutputTokens: 120 },
     }),
@@ -215,13 +218,14 @@ async function processBatch(sock, chatId) {
   busyGroups.add(chatId);
   try {
     const media = await mediaPart(sock, chosen.msg);
-    const speaker = OWNER_NUMBER && chosen.senderNumber.endsWith(OWNER_NUMBER) ? 'Mon chéri' : chosen.name;
+    const isOwner = Boolean(OWNER_NUMBER && chosen.senderNumber.endsWith(OWNER_NUMBER));
+    const speaker = isOwner ? 'Mon chéri' : chosen.name;
     await wait(delay);
     const promptText = spontaneous
       ? `Rebondis naturellement sur ce message, comme si tu lançais la conversation. Tu peux demander à ${chosen.name} comment ça va ou poser une petite question. Message : ${chosen.text || '[média partagé]'}`
       : chosen.text;
     const chatType = chatId.endsWith('@g.us') ? 'group' : 'private';
-    const reply = await answer(promptText, speaker, chatId, chosen.quotedText, media, chatType);
+    const reply = await answer(promptText, speaker, chatId, chosen.quotedText, media, chatType, isOwner);
     if (!reply) {
       console.log('Gemini n’a fourni aucune réponse ; Anaïs reste silencieuse.');
       return;
