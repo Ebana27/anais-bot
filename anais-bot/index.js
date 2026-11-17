@@ -96,6 +96,87 @@ healthServer.listen(Number(process.env.PORT || 3000), '0.0.0.0', () => {
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 
+const sentGreetingSlots = new Set();
+const sentPrivateDates = new Set();
+let greetingScheduler = null;
+
+function brazzavilleClock() {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Africa/Brazzaville', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date());
+  return Object.fromEntries(parts.map((part) => [part.type, part.value]));
+}
+
+function scheduledGreeting(hour) {
+  const greetings = hour === 9
+    ? ['Salut mes bestioles, vous êtes déjà réveillés ou je repasse après le café ?', 'Bonjour la team, qui est opérationnel ce matin ?', 'Coucou les bestioles, racontez-moi un peu votre programme.']
+    : ['Pause de midi, vous mangez quoi ?', 'Salut mes bestioles, vous avez survécu à la matinée ?', 'Midi est là… qui a déjà faim ?'];
+  return greetings[rand(0, greetings.length - 1)];
+}
+
+async function sendScheduledMessages(sock) {
+  if (!whatsappConnected) return;
+  const clock = brazzavilleClock();
+  const hour = Number(clock.hour);
+  const minute = Number(clock.minute);
+  const date = clock.year + '-' + clock.month + '-' + clock.day;
+  const dueHours = [9, 12].filter((target) => hour === target && minute <= 4 && !sentGreetingSlots.has(date + '-' + target));
+  const privateDue = hour === 12 && minute <= 4 && !sentPrivateDates.has(date);
+  if (!dueHours.length && !privateDue) return;
+
+  let groups;
+  try { groups = await sock.groupFetchAllParticipating(); }
+  catch (error) { console.error('Envois programmés ignorés : impossible de lire les groupes.', error.message); return; }
+  const groupIds = Object.keys(groups || {}).filter((id) => !GROUP_ALLOWLIST.length || GROUP_ALLOWLIST.includes(id));
+
+  for (const target of dueHours) {
+    sentGreetingSlots.add(date + '-' + target);
+    const greeting = scheduledGreeting(target);
+    for (const groupId of groupIds) {
+      try {
+        await sock.sendMessage(groupId, { text: greeting });
+        console.log('Salutation programmée envoyée dans un groupe à ' + target + ' h (heure de Brazzaville).');
+        await wait(500);
+      } catch (error) { console.error('Salutation programmée non envoyée :', error.message); }
+    }
+  }
+
+  if (privateDue) {
+    const ownIds = new Set([sock.user?.id, sock.user?.lid].filter(Boolean).map((id) => id.split(':')[0]));
+    const recipients = new Set();
+    for (const groupId of groupIds) {
+      for (const participant of groups[groupId]?.participants || []) {
+        const jid = participant.id || participant.phoneNumber || participant.lid;
+        if (jid && !ownIds.has(jid.split(':')[0])) recipients.add(jid);
+      }
+    }
+    const privateGreetings = [
+      'Salut, j’espère que ta journée se passe bien. Tu racontes quoi ?',
+      'Coucou, petite pause pour te demander comment tu vas 🙂',
+      'Hey, tu tiens le coup aujourd’hui ?',
+    ];
+    let sentCount = 0;
+    for (const jid of recipients) {
+      try {
+        await sock.sendMessage(jid, { text: privateGreetings[rand(0, privateGreetings.length - 1)] });
+        sentCount += 1;
+        await wait(900);
+      } catch (error) { console.error('Message privé programmé non envoyé à ' + jid + ':', error.message); }
+    }
+    sentPrivateDates.add(date);
+    console.log('Messages privés programmés envoyés : ' + sentCount + ' membre(s), au plus une fois aujourd’hui.');
+  }
+}
+
+function startGreetingScheduler(sock) {
+  if (greetingScheduler) clearInterval(greetingScheduler);
+  greetingScheduler = setInterval(() => {
+    sendScheduledMessages(sock).catch((error) => console.error('Erreur du planificateur :', error.message));
+  }, 30000);
+  sendScheduledMessages(sock).catch((error) => console.error('Erreur du planificateur :', error.message));
+}
+
 function messageText(message) {
   const m = message?.ephemeralMessage?.message || message?.viewOnceMessage?.message || message;
   return m?.conversation || m?.extendedTextMessage?.text ||
@@ -307,9 +388,12 @@ async function start() {
       latestQrSvg = null;
       whatsappConnected = true;
       console.log('Anaïs est connectée à WhatsApp.');
+      startGreetingScheduler(sock);
     }
     if (connection === 'close') {
       whatsappConnected = false;
+      if (greetingScheduler) clearInterval(greetingScheduler);
+      greetingScheduler = null;
       const code = lastDisconnect?.error?.output?.statusCode;
       if (code !== DisconnectReason.loggedOut) start().catch(console.error);
       else console.log('Session déconnectée. Supprime auth_info puis relance le bot pour scanner un nouveau QR.');
