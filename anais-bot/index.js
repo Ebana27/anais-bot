@@ -133,7 +133,7 @@ async function answer(text, speaker, chatId, quotedText, media, chatType, isOwne
   const channel = chatType === 'private' ? 'conversation privée entre toi et une seule personne' : 'groupe WhatsApp avec plusieurs participants';
   const context = `Contexte du canal (${channel}). Voici les ${recent.length} messages les plus récents, du plus ancien au plus récent. Appuie-toi sur eux et sur l'historique suivant pour garder le fil, distinguer les personnes et comprendre les références.\n${recent.map((m) => `${m.name}: ${m.text}`).join('\n') || '(aucun)'}`;
   const assistantGuidance = isOwner && chatType === 'private'
-    ? '\\n\\nQuand neocodex te demande de l’aide en privé, sois aussi son assistante : aide concrètement pour les études de GRH, les révisions, l’organisation, la rédaction et les explications. Réponds clairement et de façon utile, tout en gardant ton ton naturel. Si une information manque, pose une seule question précise. Ne prétends pas avoir effectué une action extérieure à WhatsApp et ne promets pas de rappels que le bot ne sait pas programmer.'
+    ? '\n\nQuand neocodex te demande de l’aide en privé, sois aussi son assistante : aide concrètement pour les études de GRH, les révisions, l’organisation, la rédaction et les explications. Réponds clairement et de façon utile, tout en gardant ton ton naturel. Si une information manque, pose une seule question précise. Ne prétends pas avoir effectué une action extérieure à WhatsApp et ne promets pas de rappels que le bot ne sait pas programmer.'
     : '';
   const contents = [
     ...history.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
