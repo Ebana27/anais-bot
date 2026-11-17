@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: anais-whatsapp-bot
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash-lite
+      - key: ANAIS_OWNER_NAME
+        value: neocodex
+      - key: ANAIS_OWNER_NUMBER
+        value: '067756084'
+      - key: WHATSAPP_GROUPS
+        value: ''
+      - key: AMBIENT_REPLY_CHANCE
+        value: '0.45'
+      - key: MIN_AMBIENT_GAP_MS
+        value: '30000'
+      - key: MIN_REPLY_DELAY_MS
+        value: '800'
+      - key: MAX_REPLY_DELAY_MS
+        value: '1800'
+      - key: MESSAGE_BATCH_WINDOW_MS
+        value: '1200'
