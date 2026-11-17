@@ -496,7 +496,9 @@ async function start() {
       const senderNumber = senderId.split('@')[0].replace(/\D/g, '');
       const quoteContext = quotedContextOf(msg);
       const lastBotReply = lastReplies.get(chatId);
-      const responseDelayMs = quoteContext?.stanzaId && lastBotReply?.id === quoteContext.stanzaId
+      const repliesToLatestBotMessage = quoteContext?.stanzaId && lastBotReply?.id === quoteContext.stanzaId;
+      const privateFollowUp = isPrivate && lastBotReply?.sentAt;
+      const responseDelayMs = repliesToLatestBotMessage || privateFollowUp
         ? Math.max(0, Date.now() - lastBotReply.sentAt)
         : null;
       const item = { msg, text, name, senderNumber, senderId, mentionJid: msg.key.participant || senderId, addressed, media: hasMedia, quotedText: quotedTextOf(msg), responseDelayMs };
