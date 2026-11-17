@@ -8,6 +8,10 @@ Elle peut analyser les images et les audios reçus, dans la limite de 10 Mo par 
 
 En privé, le propriétaire peut demander de l’aide sur le Génie informatique, la programmation, ses projets, l’organisation et la rédaction. Anaïs reste étudiante en GRH dans son personnage. Pour générer une image, configure `CLOUDFLARE_ACCOUNT_ID` et `CLOUDFLARE_API_TOKEN`, puis envoie `/image description de l’image` en privé. Le bot utilise FLUX.1 schnell via Cloudflare Workers AI et renvoie l’image dans WhatsApp. La génération est facultative : si l’API n’est pas configurée ou échoue, le bot reste silencieux. Le forfait gratuit Cloudflare Workers AI comprend 10 000 Neurons par jour ; une fois la limite atteinte, les requêtes échouent jusqu’à la remise à zéro, sauf passage à une offre payante.
 
+## Messages autonomes programmés
+
+Quand le processus est actif et connecté à WhatsApp, Anaïs envoie une salutation dans chaque groupe autorisé à 9 h et à 12 h, heure de Brazzaville. À midi, elle envoie aussi au plus un petit message privé par jour à chaque membre de ses groupes. Les textes sont choisis dans de courtes variantes pour éviter les appels API supplémentaires. Avec Render Free, ces horaires sont au mieux effort : le service peut se mettre en veille après 15 minutes sans trafic et manquer l’envoi. Les envois privés dépendent aussi des paramètres de confidentialité des destinataires.
+
 ## Démarrage
 
 1. Installe Node.js 20 ou plus récent.
