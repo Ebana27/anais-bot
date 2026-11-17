@@ -13,6 +13,8 @@ const GROUP_ALLOWLIST = (process.env.WHATSAPP_GROUPS || '')
   .split(',').map((s) => s.trim()).filter(Boolean);
 const OWNER_NUMBER = (process.env.ANAIS_OWNER_NUMBER || '').replace(/\D/g, '');
 const MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID || '';
+const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN || '';
 const MIN_DELAY = Number(process.env.MIN_REPLY_DELAY_MS || 800);
 const MAX_DELAY = Number(process.env.MAX_REPLY_DELAY_MS || 1800);
 const BATCH_WINDOW = Number(process.env.MESSAGE_BATCH_WINDOW_MS || 1200);
@@ -97,6 +99,30 @@ function messageText(message) {
     m?.imageMessage?.caption || m?.videoMessage?.caption || '';
 }
 
+async function generateImage(prompt) {
+  if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_API_TOKEN) {
+    throw new Error('La génération d’image n’est pas configurée.');
+  }
+  const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/black-forest-labs/flux-1-schnell`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${CLOUDFLARE_API_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ prompt: prompt.slice(0, 1800), steps: 4 }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.success || !result.result?.image) {
+    throw new Error(result.errors?.[0]?.message || `Cloudflare AI ${response.status}`);
+  }
+  return Buffer.from(result.result.image, 'base64');
+}
+
+function imagePromptOf(text) {
+  const match = text.match(/^\\/image\\s+([\\s\\S]{3,1800})$/i);
+  return match?.[1]?.trim() || null;
+}
+
 async function mediaPart(sock, msg) {
   const message = msg.message?.ephemeralMessage?.message || msg.message?.viewOnceMessage?.message || msg.message;
   const media = message?.imageMessage || message?.audioMessage;
@@ -133,7 +159,7 @@ async function answer(text, speaker, chatId, quotedText, media, chatType, isOwne
   const channel = chatType === 'private' ? 'conversation privée entre toi et une seule personne' : 'groupe WhatsApp avec plusieurs participants';
   const context = `Contexte du canal (${channel}). Voici les ${recent.length} messages les plus récents, du plus ancien au plus récent. Appuie-toi sur eux et sur l'historique suivant pour garder le fil, distinguer les personnes et comprendre les références.\n${recent.map((m) => `${m.name}: ${m.text}`).join('\n') || '(aucun)'}`;
   const assistantGuidance = isOwner && chatType === 'private'
-    ? '\n\nQuand neocodex te demande de l’aide en privé, sois aussi son assistante : aide concrètement pour les études de GRH, les révisions, l’organisation, la rédaction et les explications. Réponds clairement et de façon utile, tout en gardant ton ton naturel. Si une information manque, pose une seule question précise. Ne prétends pas avoir effectué une action extérieure à WhatsApp et ne promets pas de rappels que le bot ne sait pas programmer.'
+    ? '\n\nQuand neocodex te demande de l’aide en privé, sois aussi son assistante : il étudie le Génie informatique, aide-le pour la programmation, ses projets et ses études, ainsi que pour l’organisation, la rédaction et les explications. Ta propre spécialité d’études reste la GRH. Réponds clairement et de façon utile, tout en gardant ton ton naturel. Si une information manque, pose une seule question précise. Ne prétends pas avoir effectué une action extérieure à WhatsApp et ne promets pas de rappels que le bot ne sait pas programmer.'
     : '';
   const contents = [
     ...history.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
@@ -219,8 +245,17 @@ async function processBatch(sock, chatId) {
   try {
     const media = await mediaPart(sock, chosen.msg);
     const isOwner = Boolean(OWNER_NUMBER && chosen.senderNumber.endsWith(OWNER_NUMBER));
+    const isPrivateChat = chatId.endsWith('@s.whatsapp.net') || chatId.endsWith('@lid');
+    const imagePrompt = isOwner && isPrivateChat ? imagePromptOf(chosen.text) : null;
     const speaker = isOwner ? 'Mon chéri' : chosen.name;
     await wait(delay);
+    if (imagePrompt) {
+      console.log('Anaïs prépare une image avec Cloudflare AI…');
+      const image = await generateImage(imagePrompt);
+      await sock.sendMessage(chatId, { image, caption: 'Voilà 😊' }, { quoted: chosen.msg });
+      console.log('Image générée et envoyée.');
+      return;
+    }
     const promptText = spontaneous
       ? `Rebondis naturellement sur ce message, comme si tu lançais la conversation. Tu peux demander à ${chosen.name} comment ça va ou poser une petite question. Message : ${chosen.text || '[média partagé]'}`
       : chosen.text;
