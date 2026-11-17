@@ -1,7 +1,9 @@
 require('dotenv').config();
 
-const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode-terminal/vendor/QRCode');
+const QRErrorCorrectLevel = require('qrcode-terminal/vendor/QRCode/QRErrorCorrectLevel');
 const http = require('node:http');
+const crypto = require('node:crypto');
 const { personality } = require('../personality');
 
 const apiKey = process.env.GEMINI_API_KEY;
@@ -27,8 +29,53 @@ const batchTimers = new Map();
 const busyGroups = new Set();
 let downloadMediaMessage;
 let whatsappConnected = false;
+let latestQrSvg = null;
+const qrViewPassword = process.env.QR_VIEW_PASSWORD || '';
+
+function makeQrSvg(value) {
+  const qr = new QRCode(-1, QRErrorCorrectLevel.L);
+  qr.addData(value);
+  qr.make();
+  const quietZone = 4;
+  const size = qr.getModuleCount();
+  const path = [];
+  for (let row = 0; row < size; row += 1) {
+    for (let col = 0; col < size; col += 1) {
+      if (qr.modules[row][col]) path.push(`M${col + quietZone},${row + quietZone}h1v1h-1z`);
+    }
+  }
+  const viewSize = size + quietZone * 2;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${viewSize} ${viewSize}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${path.join('')}" fill="#000"/></svg>`;
+}
+
+function hasQrAccess(req) {
+  if (!qrViewPassword) return false;
+  const header = req.headers.authorization || '';
+  if (!header.startsWith('Basic ')) return false;
+  let supplied;
+  try { supplied = Buffer.from(header.slice(6), 'base64').toString('utf8'); } catch { return false; }
+  const expected = Buffer.from(`anais:${qrViewPassword}`);
+  const actual = Buffer.from(supplied);
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
 
 const healthServer = http.createServer((req, res) => {
+  if (req.url === '/qr') {
+    if (!qrViewPassword) {
+      res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end('Configure QR_VIEW_PASSWORD dans les variables du service.');
+      return;
+    }
+    if (!hasQrAccess(req)) {
+      res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Anais WhatsApp QR", charset="UTF-8"', 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end('Authentification requise.');
+      return;
+    }
+    const qrMarkup = latestQrSvg || '<p>WhatsApp est déjà connecté ou aucun QR n’est en attente. Recharge cette page après un redémarrage.</p>';
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, max-age=0', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src data:;" });
+    res.end(`<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>QR WhatsApp Anaïs</title><style>body{font:16px system-ui,sans-serif;max-width:520px;margin:30px auto;padding:0 16px;text-align:center;color:#222}svg{width:min(88vw,430px);height:auto;border:12px solid white;box-shadow:0 1px 8px #999}p{line-height:1.5}</style><h1>Connexion WhatsApp</h1>${qrMarkup}<p>Scanne ce code depuis WhatsApp → Appareils connectés → Connecter un appareil. Ne partage pas cette page ni le QR.</p><p>Si le code expire, recharge la page.</p></html>`);
+    return;
+  }
   if (req.url !== '/health') {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('Not found');
@@ -202,8 +249,12 @@ async function start() {
   const sock = makeWASocket({ auth: state, printQRInTerminal: false, markOnlineOnConnect: false });
   sock.ev.on('creds.update', saveCreds);
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-    if (qr) qrcode.generate(qr, { small: true });
+    if (qr) {
+      latestQrSvg = makeQrSvg(qr);
+      console.log('Nouveau QR WhatsApp prêt sur la page protégée /qr.');
+    }
     if (connection === 'open') {
+      latestQrSvg = null;
       whatsappConnected = true;
       console.log('Anaïs est connectée à WhatsApp.');
     }
