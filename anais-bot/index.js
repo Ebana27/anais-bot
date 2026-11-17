@@ -15,8 +15,9 @@ const OWNER_NUMBER = (process.env.ANAIS_OWNER_NUMBER || '').replace(/\D/g, '');
 const MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID || '';
 const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN || '';
-const MIN_DELAY = Math.max(80000, Number(process.env.MIN_REPLY_DELAY_MS || 80000));
-const MAX_DELAY = Math.max(MIN_DELAY, Number(process.env.MAX_REPLY_DELAY_MS || 80000));
+const MIN_DELAY = 8000;
+const MAX_DELAY = 60000;
+const CONGOLIBS_URL = 'https://congolibs.netlify.app/';
 const BATCH_WINDOW = Math.max(1800, Number(process.env.MESSAGE_BATCH_WINDOW_MS || 1800));
 const MAX_BATCH_WAIT = 5000;
 const AMBIENT_REPLY_CHANCE = Math.max(0.70, Math.min(1, Number(process.env.AMBIENT_REPLY_CHANCE || 0.70)));
@@ -25,6 +26,7 @@ const MAX_HISTORY = 8;
 const histories = new Map();
 const recentMessages = new Map();
 const lastReplies = new Map();
+const lastCongolibsMention = new Map();
 const lastAmbient = new Map();
 const activeGroupUntil = new Map();
 const seen = new Set();
@@ -232,6 +234,26 @@ function wasAddressed(sock, msg, text) {
     fuzzyName || /(^|[^a-z0-9])@(all|tous|toutlemonde)\b/.test(normalizedText);
 }
 
+function naturalReplyDelay(item, batchCount) {
+  const observedDelay = Number(item?.responseDelayMs);
+  if (Number.isFinite(observedDelay) && observedDelay > 0) {
+    return Math.min(MAX_DELAY, Math.max(MIN_DELAY, Math.round(observedDelay)));
+  }
+  if (batchCount >= 3) return rand(8000, 12000);
+  const roll = Math.random();
+  if (roll < 0.6) return rand(8000, 14000);
+  if (roll < 0.9) return rand(15000, 25000);
+  return rand(30000, MAX_DELAY);
+}
+
+function isCongolibsRelevant(text) {
+  const normalized = text.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase();
+  const education = /\\b(etud|cours|livre|bibliotheque|examen|concours|expose|document|ressource|apprendre|revision|orientation|universite|ecole|scolaire|enseign|formation|quiz|exercice|pedagog)\\w*/i.test(normalized);
+  const platform = /\\b(plateforme|site|application|projet)\\b/i.test(normalized);
+  const feedback = /\\b(avis|opinion|retour|tester|interesse|feedback|recommander|pensez|penses)\\w*/i.test(normalized);
+  return education || (platform && feedback);
+}
+
 function getHistory(chatId) {
   if (!histories.has(chatId)) histories.set(chatId, []);
   return histories.get(chatId);
@@ -242,6 +264,12 @@ async function answer(text, speaker, chatId, quotedText, media, chatType, isOwne
   const recent = recentMessages.get(chatId) || [];
   const channel = chatType === 'private' ? 'conversation privée entre toi et une seule personne' : 'groupe WhatsApp avec plusieurs participants';
   const context = 'Contexte du canal (' + channel + '). Voici les ' + recent.length + ' messages récents, du plus ancien au plus récent. Les heures aident à repérer les rafales et les pauses. Regroupe les messages rapprochés comme une seule pensée, distingue les participants, réponds au dernier point important et évite de répondre séparément à chaque ligne. Appuie-toi aussi sur l’historique pour garder le fil.\n' + (recent.map((m) => '[' + (m.time || '--:--') + '] ' + m.name + ': ' + m.text).join('\n') || '(aucun)');
+  const promoContext = [text, ...recent.slice(-5).map((m) => m.text)].join(' ');
+  const alreadyMentioned = /congolibs/i.test(promoContext) ||
+    Date.now() - (lastCongolibsMention.get(chatId) || 0) < 30 * 24 * 60 * 60 * 1000;
+  const congolibsGuidance = !alreadyMentioned && isCongolibsRelevant(promoContext)
+    ? '\\n\\nQuand le sujet concerne vraiment l’apprentissage, les études, les ressources scolaires ou une plateforme éducative, tu peux parfois proposer Congolibs, le projet de neocodex : ' + CONGOLIBS_URL + '. Présente-le brièvement comme une plateforme éducative et demande si les personnes seraient intéressées pour la découvrir ou donner un avis. Ne l’insère jamais dans une conversation sans rapport, ne force pas la promotion, n’invente pas de fonctionnalités et ne répète pas la suggestion dans la même conversation.'
+    : '';
   const assistantGuidance = isOwner && chatType === 'private'
     ? '\n\nQuand neocodex te demande de l’aide en privé, sois aussi son assistante : il étudie le Génie informatique, aide-le pour la programmation, ses projets et ses études, ainsi que pour l’organisation, la rédaction et les explications. Ta propre spécialité d’études reste la GRH. Réponds clairement et de façon utile, tout en gardant ton ton naturel. Si une information manque, pose une seule question précise. Ne prétends pas avoir effectué une action extérieure à WhatsApp et ne promets pas de rappels que le bot ne sait pas programmer.'
     : '';
@@ -253,7 +281,7 @@ async function answer(text, speaker, chatId, quotedText, media, chatType, isOwne
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      system_instruction: { parts: [{ text: personality + assistantGuidance }] },
+      system_instruction: { parts: [{ text: personality + assistantGuidance + congolibsGuidance }] },
       contents,
       generationConfig: { temperature: 0.9, maxOutputTokens: 120 },
     }),
@@ -266,6 +294,7 @@ async function answer(text, speaker, chatId, quotedText, media, chatType, isOwne
   const result = await response.json();
   const reply = result.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('').trim();
   if (!reply) return null;
+  if (/congolibs/i.test(reply)) lastCongolibsMention.set(chatId, Date.now());
   history.push({ role: 'user', content: `${speaker} : ${text}` }, { role: 'assistant', content: reply });
   if (history.length > MAX_HISTORY * 2) history.splice(0, history.length - MAX_HISTORY * 2);
   return reply;
@@ -275,6 +304,11 @@ function quotedTextOf(msg) {
   const content = msg.message?.ephemeralMessage?.message || msg.message?.viewOnceMessage?.message || msg.message;
   const context = content?.extendedTextMessage?.contextInfo || content?.imageMessage?.contextInfo || content?.audioMessage?.contextInfo;
   return messageText(context?.quotedMessage);
+}
+
+function quotedContextOf(msg) {
+  const content = msg.message?.ephemeralMessage?.message || msg.message?.viewOnceMessage?.message || msg.message;
+  return content?.extendedTextMessage?.contextInfo || content?.imageMessage?.contextInfo || content?.audioMessage?.contextInfo || null;
 }
 
 function importance(item) {
@@ -328,7 +362,7 @@ async function processBatch(sock, chatId) {
     spontaneous = true;
   }
 
-  const delay = rand(MIN_DELAY, MAX_DELAY);
+  const delay = naturalReplyDelay(chosen, batch.length);
   console.log(`Anaïs prépare une réponse ${spontaneous ? 'spontanée' : 'à une interpellation'} (${delay} ms).`);
   busyGroups.add(chatId);
   try {
@@ -375,7 +409,8 @@ async function processBatch(sock, chatId) {
     console.log('Réponse générée ; envoi à WhatsApp…');
     const mentionJid = spontaneous && chosen.mentionJid;
     const outgoingText = mentionJid ? `@${mentionJid.split('@')[0]} ${reply}` : reply;
-    await sock.sendMessage(chatId, { text: outgoingText, ...(mentionJid ? { mentions: [mentionJid] } : {}) }, { quoted: chosen.msg });
+    const sent = await sock.sendMessage(chatId, { text: outgoingText, ...(mentionJid ? { mentions: [mentionJid] } : {}) }, { quoted: chosen.msg });
+    lastReplies.set(chatId, { id: sent?.key?.id, sentAt: Date.now() });
     if (chatId.endsWith('@g.us')) lastAmbient.set(chatId, Date.now());
     console.log(`Réponse envoyée au groupe (${batch.length} message(s) regroupé(s)).`);
   } catch (error) {
@@ -458,7 +493,12 @@ async function start() {
       const addressed = isPrivate || wasAddressed(sock, msg, text);
       console.log(`Message de groupe détecté ; interpellation=${addressed} ; mise en lot.`);
       const senderNumber = senderId.split('@')[0].replace(/\D/g, '');
-      const item = { msg, text, name, senderNumber, senderId, mentionJid: msg.key.participant || senderId, addressed, media: hasMedia, quotedText: quotedTextOf(msg) };
+      const quoteContext = quotedContextOf(msg);
+      const lastBotReply = lastReplies.get(chatId);
+      const responseDelayMs = quoteContext?.stanzaId && lastBotReply?.id === quoteContext.stanzaId
+        ? Math.max(0, Date.now() - lastBotReply.sentAt)
+        : null;
+      const item = { msg, text, name, senderNumber, senderId, mentionJid: msg.key.participant || senderId, addressed, media: hasMedia, quotedText: quotedTextOf(msg), responseDelayMs };
       if (!pendingGroups.has(chatId)) pendingGroups.set(chatId, []);
       if (!batchStartedAt.has(chatId)) batchStartedAt.set(chatId, Date.now());
       pendingGroups.get(chatId).push(item);
