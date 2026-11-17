@@ -15,11 +15,12 @@ const OWNER_NUMBER = (process.env.ANAIS_OWNER_NUMBER || '').replace(/\D/g, '');
 const MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID || '';
 const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN || '';
-const MIN_DELAY = Number(process.env.MIN_REPLY_DELAY_MS || 800);
-const MAX_DELAY = Number(process.env.MAX_REPLY_DELAY_MS || 1800);
-const BATCH_WINDOW = Number(process.env.MESSAGE_BATCH_WINDOW_MS || 1200);
-const AMBIENT_REPLY_CHANCE = Number(process.env.AMBIENT_REPLY_CHANCE || 0.45);
-const MIN_AMBIENT_GAP = Number(process.env.MIN_AMBIENT_GAP_MS || 30000);
+const MIN_DELAY = Math.max(0, Math.min(300, Number(process.env.MIN_REPLY_DELAY_MS || 300)));
+const MAX_DELAY = Math.max(MIN_DELAY, Math.min(700, Number(process.env.MAX_REPLY_DELAY_MS || 700)));
+const BATCH_WINDOW = Math.max(1800, Number(process.env.MESSAGE_BATCH_WINDOW_MS || 1800));
+const MAX_BATCH_WAIT = 5000;
+const AMBIENT_REPLY_CHANCE = Math.max(0.70, Math.min(1, Number(process.env.AMBIENT_REPLY_CHANCE || 0.70)));
+const MIN_AMBIENT_GAP = Math.min(15000, Math.max(0, Number(process.env.MIN_AMBIENT_GAP_MS || 15000)));
 const MAX_HISTORY = 8;
 const histories = new Map();
 const recentMessages = new Map();
@@ -28,6 +29,7 @@ const lastAmbient = new Map();
 const seen = new Set();
 const pendingGroups = new Map();
 const batchTimers = new Map();
+const batchStartedAt = new Map();
 const busyGroups = new Set();
 let downloadMediaMessage;
 let whatsappConnected = false;
@@ -157,7 +159,7 @@ async function answer(text, speaker, chatId, quotedText, media, chatType, isOwne
   const history = getHistory(chatId);
   const recent = recentMessages.get(chatId) || [];
   const channel = chatType === 'private' ? 'conversation privée entre toi et une seule personne' : 'groupe WhatsApp avec plusieurs participants';
-  const context = `Contexte du canal (${channel}). Voici les ${recent.length} messages les plus récents, du plus ancien au plus récent. Appuie-toi sur eux et sur l'historique suivant pour garder le fil, distinguer les personnes et comprendre les références.\n${recent.map((m) => `${m.name}: ${m.text}`).join('\n') || '(aucun)'}`;
+  const context = 'Contexte du canal (' + channel + '). Voici les ' + recent.length + ' messages récents, du plus ancien au plus récent. Les heures aident à repérer les rafales et les pauses. Regroupe les messages rapprochés comme une seule pensée, distingue les participants, réponds au dernier point important et évite de répondre séparément à chaque ligne. Appuie-toi aussi sur l’historique pour garder le fil.\n' + (recent.map((m) => '[' + (m.time || '--:--') + '] ' + m.name + ': ' + m.text).join('\n') || '(aucun)');
   const assistantGuidance = isOwner && chatType === 'private'
     ? '\n\nQuand neocodex te demande de l’aide en privé, sois aussi son assistante : il étudie le Génie informatique, aide-le pour la programmation, ses projets et ses études, ainsi que pour l’organisation, la rédaction et les explications. Ta propre spécialité d’études reste la GRH. Réponds clairement et de façon utile, tout en gardant ton ton naturel. Si une information manque, pose une seule question précise. Ne prétends pas avoir effectué une action extérieure à WhatsApp et ne promets pas de rappels que le bot ne sait pas programmer.'
     : '';
@@ -208,10 +210,12 @@ async function processBatch(sock, chatId) {
   batchTimers.delete(chatId);
   const batch = pendingGroups.get(chatId) || [];
   pendingGroups.delete(chatId);
+  batchStartedAt.delete(chatId);
   if (!batch.length) return;
   console.log(`Lot fermé : ${batch.length} message(s), ${batch.filter((item) => item.addressed).length} interpellation(s).`);
   if (busyGroups.has(chatId)) {
     pendingGroups.set(chatId, batch.concat(pendingGroups.get(chatId) || []));
+    if (!batchStartedAt.has(chatId)) batchStartedAt.set(chatId, Date.now() - MAX_BATCH_WAIT);
     batchTimers.set(chatId, setTimeout(() => processBatch(sock, chatId).catch(console.error), 300));
     return;
   }
@@ -276,7 +280,10 @@ async function processBatch(sock, chatId) {
   } finally {
     busyGroups.delete(chatId);
     if (pendingGroups.get(chatId)?.length && !batchTimers.has(chatId)) {
-      batchTimers.set(chatId, setTimeout(() => processBatch(sock, chatId).catch(console.error), BATCH_WINDOW));
+      if (!batchStartedAt.has(chatId)) batchStartedAt.set(chatId, Date.now());
+      const elapsed = Date.now() - batchStartedAt.get(chatId);
+      const waitForQuiet = Math.max(0, Math.min(BATCH_WINDOW, MAX_BATCH_WAIT - elapsed));
+      batchTimers.set(chatId, setTimeout(() => processBatch(sock, chatId).catch(console.error), waitForQuiet));
     }
   }
 }
@@ -337,7 +344,9 @@ async function start() {
       const recent = recentMessages.get(chatId) || [];
       const name = msg.pushName || senderId.split('@')[0] || 'Membre';
       const recentText = text || (content?.imageMessage ? '[photo envoyée]' : '[audio envoyé]');
-      recent.push({ name, text: recentText.slice(0, 500) });
+      const messageSeconds = Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000);
+      const time = new Date(messageSeconds * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Brazzaville' });
+      recent.push({ name, text: recentText.slice(0, 500), time });
       if (recent.length > 20) recent.shift();
       recentMessages.set(chatId, recent);
       const addressed = isPrivate || wasAddressed(sock, msg, text);
@@ -345,9 +354,12 @@ async function start() {
       const senderNumber = senderId.split('@')[0].replace(/\D/g, '');
       const item = { msg, text, name, senderNumber, senderId, mentionJid: msg.key.participant || senderId, addressed, media: hasMedia, quotedText: quotedTextOf(msg) };
       if (!pendingGroups.has(chatId)) pendingGroups.set(chatId, []);
+      if (!batchStartedAt.has(chatId)) batchStartedAt.set(chatId, Date.now());
       pendingGroups.get(chatId).push(item);
       if (batchTimers.has(chatId)) clearTimeout(batchTimers.get(chatId));
-      batchTimers.set(chatId, setTimeout(() => processBatch(sock, chatId).catch(console.error), BATCH_WINDOW));
+      const elapsed = Date.now() - batchStartedAt.get(chatId);
+      const waitForQuiet = Math.max(0, Math.min(BATCH_WINDOW, MAX_BATCH_WAIT - elapsed));
+      batchTimers.set(chatId, setTimeout(() => processBatch(sock, chatId).catch(console.error), waitForQuiet));
     }
   });
 }
