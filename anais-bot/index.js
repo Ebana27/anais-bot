@@ -26,6 +26,7 @@ const histories = new Map();
 const recentMessages = new Map();
 const lastReplies = new Map();
 const lastAmbient = new Map();
+const activeGroupUntil = new Map();
 const seen = new Set();
 const pendingGroups = new Map();
 const batchTimers = new Map();
@@ -225,6 +226,8 @@ async function processBatch(sock, chatId) {
   let spontaneous = false;
   if (directed.length) {
     chosen = directed.reduce((best, item) => importance(item) >= importance(best) ? item : best);
+    activeGroupUntil.set(chatId, Date.now() + 5 * 60 * 1000);
+    console.log('Anaïs reste attentive à ce groupe pendant les prochaines minutes.');
   } else {
     const substantive = batch.filter((item) => importance(item) >= 1);
     if (!substantive.length) {
@@ -235,7 +238,8 @@ async function processBatch(sock, chatId) {
       console.log('Aucune réponse spontanée : délai minimal entre interventions pas encore écoulé.');
       return;
     }
-    if (Math.random() > AMBIENT_REPLY_CHANCE) {
+    const followUp = Date.now() < (activeGroupUntil.get(chatId) || 0);
+    if (!followUp && Math.random() > AMBIENT_REPLY_CHANCE) {
       console.log('Aucune réponse spontanée choisie pour ce lot.');
       return;
     }
@@ -273,7 +277,7 @@ async function processBatch(sock, chatId) {
     const mentionJid = spontaneous && chosen.mentionJid;
     const outgoingText = mentionJid ? `@${mentionJid.split('@')[0]} ${reply}` : reply;
     await sock.sendMessage(chatId, { text: outgoingText, ...(mentionJid ? { mentions: [mentionJid] } : {}) }, { quoted: chosen.msg });
-    if (spontaneous) lastAmbient.set(chatId, Date.now());
+    if (chatId.endsWith('@g.us')) lastAmbient.set(chatId, Date.now());
     console.log(`Réponse envoyée au groupe (${batch.length} message(s) regroupé(s)).`);
   } catch (error) {
     console.error('Erreur pendant la réponse ; Anaïs reste silencieuse :', error.message);
