@@ -28,8 +28,8 @@ services:
       - key: MIN_AMBIENT_GAP_MS
         value: '15000'
       - key: MIN_REPLY_DELAY_MS
-        value: '300'
+        value: '80000'
       - key: MAX_REPLY_DELAY_MS
-        value: '700'
+        value: '80000'
       - key: MESSAGE_BATCH_WINDOW_MS
         value: '1800'
