@@ -162,7 +162,7 @@ async function sendScheduledMessages(sock) {
         await sock.sendMessage(jid, { text: privateGreetings[rand(0, privateGreetings.length - 1)] });
         sentCount += 1;
         await wait(900);
-      } catch (error) { console.error('Message privé programmé non envoyé à ' + jid + ':', error.message); }
+      } catch (error) { console.error('Message privé programmé non envoyé :', error.message); }
     }
     sentPrivateDates.add(date);
     console.log('Messages privés programmés envoyés : ' + sentCount + ' membre(s), au plus une fois aujourd’hui.');
