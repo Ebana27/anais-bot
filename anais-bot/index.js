@@ -119,7 +119,7 @@ async function generateImage(prompt) {
 }
 
 function imagePromptOf(text) {
-  const match = text.match(/^\\/image\\s+([\\s\\S]{3,1800})$/i);
+  const match = text.match(/^\/image\s+([\s\S]{3,1800})$/i);
   return match?.[1]?.trim() || null;
 }
 
